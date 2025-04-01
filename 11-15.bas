@@ -529,29 +529,118 @@ Sub ログファイル管理自動化()
         obj_FSO.CreateFolder str_ログフォルダ
     End If
     
-    ' ログファイルのオープン/作成
-    On Error Resume Next
-    If obj_FSO.FileExists(str_ログファイル) Then
-        ' 既存のファイルに追記
-        Set obj_テキストストリーム = obj_FSO.OpenTextFile(str_ログファイル, 8) ' 8 = 追記モード
-    Else
-        ' 新規ファイルを作成
-        Set obj_テキストストリーム = obj_FSO.CreateTextFile(str_ログファイル, True)
-        
-        ' ヘッダー情報を記録
-        obj_テキストストリーム.WriteLine "===== ログファイル開始: " & Format(Now, "yyyy/mm/dd") & " ====="
-        obj_テキストストリーム.WriteLine "アプリケーション: " & ThisWorkbook.Name
-        obj_テキストストリーム.WriteLine "ユーザー: " & Application.UserName
-        obj_テキストストリーム.WriteLine "========================================"
-        obj_テキストストリーム.WriteLine ""
-    End If
-    On Error GoTo 0
+    ' ===== 2. 新しいログファイルの作成 =====
+    ' ログファイル名を日付と時刻で生成
+    str_ログファイル = str_ログフォルダ & "Log_" & _
+                        Format(dt_現在, "yyyymmdd_hhnnss") & ".txt"
     
-    ' タイムスタンプ付きでメッセージを記録
+    ' ログファイルの作成
+    Set obj_テキストストリーム = obj_FSO.CreateTextFile(str_ログファイル, True)
+    
+    ' ヘッダー情報の書き込み
+    With obj_テキストストリーム
+        .WriteLine "===== " & str_アプリ名 & " ログファイル ====="
+        .WriteLine "日時: " & Format(dt_現在, "yyyy/mm/dd hh:nn:ss")
+        .WriteLine "ユーザー: " & str_ユーザー名
+        .WriteLine "Excelバージョン: " & Application.Version
+        .WriteLine "======================================"
+        .WriteLine ""
+        
+        ' 処理内容のログを記録（サンプル）
+        .WriteLine Format(Now, "hh:nn:ss") & " - 処理開始"
+        .WriteLine Format(Now, "hh:nn:ss") & " - データファイルの読み込み"
+        .WriteLine Format(Now, "hh:nn:ss") & " - レコード数: 1,234件"
+        .WriteLine Format(Now, "hh:nn:ss") & " - 処理完了"
+        
+        ' ログファイルを閉じる
+        .Close
+    End With
+    
+    ' ===== 3. 古いログファイルの管理 =====
+    ' 保存期間を過ぎたファイルを削除
+    dt_保存期間制限 = DateAdd("d", -INT_ログ保存日数, dt_現在)
+    lng_削除ファイル数 = 0
+    
+    Set obj_フォルダ = obj_FSO.GetFolder(str_ログフォルダ)
+    
+    For Each obj_ファイル In obj_フォルダ.Files
+        ' ログファイルのみを対象
+        If LCase(obj_FSO.GetExtensionName(obj_ファイル.Name)) = "txt" And _
+           Left(obj_ファイル.Name, 4) = "Log_" Then
+            
+            ' ファイルの作成日が保存期間を超えているか確認
+            If obj_ファイル.DateCreated < dt_保存期間制限 Then
+                On Error Resume Next
+                obj_FSO.DeleteFile obj_ファイル.Path, True
+                
+                If Err.Number = 0 Then
+                    lng_削除ファイル数 = lng_削除ファイル数 + 1
+                End If
+                On Error GoTo 0
+            End If
+        End If
+    Next obj_ファイル
+    
+    ' ===== 4. ログサマリーの作成 =====
+    ' 最新のログファイルをオープン
+    Set obj_テキストストリーム = obj_FSO.OpenTextFile(str_ログファイル, 8) ' 8 = 追記モード
+    
+    ' ログ管理情報を追記
+    With obj_テキストストリーム
+        .WriteLine ""
+        .WriteLine "===== ログ管理情報 ====="
+        .WriteLine "ログフォルダ: " & str_ログフォルダ
+        .WriteLine "ログ保存期間: " & INT_ログ保存日数 & " 日"
+        .WriteLine "古いログファイル削除数: " & lng_削除ファイル数 & " ファイル"
+        .WriteLine "===== ログ終了 ====="
+        
+        ' ログファイルを閉じる
+        .Close
+    End With
+    
+    ' メッセージを表示
+    MsgBox "ログファイルが作成されました: " & vbCrLf & _
+           str_ログファイル & vbCrLf & vbCrLf & _
+           "保存期間（" & INT_ログ保存日数 & "日）を過ぎたログファイル " & _
+           lng_削除ファイル数 & " 件を削除しました。", vbInformation
+End Sub
+
+' ログファイルに記録する補助関数
+Public Sub ログ記録(str_メッセージ As String, Optional str_レベル As String = "INFO")
+    ' 変数宣言
+    Dim str_ログフォルダ As String
+    Dim str_ログファイル As String
+    Dim obj_FSO As Object
+    Dim obj_テキストストリーム As Object
+    
+    ' FSO（FileSystemObject）の作成
+    Set obj_FSO = CreateObject("Scripting.FileSystemObject")
+    
+    ' ログフォルダの設定
+    str_ログフォルダ = ThisWorkbook.Path & "\logs\"
+    
+    ' 日付に基づくログファイル名（1日1ファイル）
+    str_ログファイル = str_ログフォルダ & "Log_" & Format(Date, "yyyymmdd") & ".txt"
+    
+    ' ログフォルダの確認と作成
+    If Not obj_FSO.FolderExists(str_ログフォルダ) Then
+        ' ログフォルダが存在しない場合は作成する
+        obj_FSO.CreateFolder str_ログフォルダ
+    End If
+    
+    ' ログファイルを開く（存在しない場合は作成される）
+    ' 8 = ForAppending（追記モード）
+    Set obj_テキストストリーム = obj_FSO.OpenTextFile(str_ログファイル, 8, True)
+    
+    ' タイムスタンプとレベルを含めてメッセージを書き込む
     obj_テキストストリーム.WriteLine Format(Now, "yyyy/mm/dd hh:nn:ss") & " [" & str_レベル & "] " & str_メッセージ
     
     ' ファイルを閉じる
     obj_テキストストリーム.Close
+    
+    ' オブジェクトの解放
+    Set obj_テキストストリーム = Nothing
+    Set obj_FSO = Nothing
 End Sub
 
 '''---------------------------------------------------------
@@ -728,117 +817,3 @@ Private Function 有効なファイル名に変換(str_元ファイル名 As Str
     
     有効なファイル名に変換 = str_結果
 End Function
-    
-    ' ===== 2. 新しいログファイルの作成 =====
-    ' ログファイル名を日付と時刻で生成
-    str_ログファイル = str_ログフォルダ & "Log_" & _
-                        Format(dt_現在, "yyyymmdd_hhnnss") & ".txt"
-    
-    ' ログファイルの作成
-    Set obj_テキストストリーム = obj_FSO.CreateTextFile(str_ログファイル, True)
-    
-    ' ヘッダー情報の書き込み
-    With obj_テキストストリーム
-        .WriteLine "===== " & str_アプリ名 & " ログファイル ====="
-        .WriteLine "日時: " & Format(dt_現在, "yyyy/mm/dd hh:nn:ss")
-        .WriteLine "ユーザー: " & str_ユーザー名
-        .WriteLine "Excelバージョン: " & Application.Version
-        .WriteLine "======================================"
-        .WriteLine ""
-        
-        ' 処理内容のログを記録（サンプル）
-        .WriteLine Format(Now, "hh:nn:ss") & " - 処理開始"
-        .WriteLine Format(Now, "hh:nn:ss") & " - データファイルの読み込み"
-        .WriteLine Format(Now, "hh:nn:ss") & " - レコード数: 1,234件"
-        .WriteLine Format(Now, "hh:nn:ss") & " - 処理完了"
-        
-        ' ログファイルを閉じる
-        .Close
-    End With
-    
-    ' ===== 3. 古いログファイルの管理 =====
-    ' 保存期間を過ぎたファイルを削除
-    dt_保存期間制限 = DateAdd("d", -INT_ログ保存日数, dt_現在)
-    lng_削除ファイル数 = 0
-    
-    Set obj_フォルダ = obj_FSO.GetFolder(str_ログフォルダ)
-    
-    For Each obj_ファイル In obj_フォルダ.Files
-        ' ログファイルのみを対象
-        If LCase(obj_FSO.GetExtensionName(obj_ファイル.Name)) = "txt" And _
-           Left(obj_ファイル.Name, 4) = "Log_" Then
-            
-            ' ファイルの作成日が保存期間を超えているか確認
-            If obj_ファイル.DateCreated < dt_保存期間制限 Then
-                On Error Resume Next
-                obj_FSO.DeleteFile obj_ファイル.Path, True
-                
-                If Err.Number = 0 Then
-                    lng_削除ファイル数 = lng_削除ファイル数 + 1
-                End If
-                On Error GoTo 0
-            End If
-        End If
-    Next obj_ファイル
-    
-    ' ===== 4. ログサマリーの作成 =====
-    ' 最新のログファイルをオープン
-    Set obj_テキストストリーム = obj_FSO.OpenTextFile(str_ログファイル, 8) ' 8 = 追記モード
-    
-    ' ログ管理情報を追記
-    With obj_テキストストリーム
-        .WriteLine ""
-        .WriteLine "===== ログ管理情報 ====="
-        .WriteLine "ログフォルダ: " & str_ログフォルダ
-        .WriteLine "ログ保存期間: " & INT_ログ保存日数 & " 日"
-        .WriteLine "古いログファイル削除数: " & lng_削除ファイル数 & " ファイル"
-        .WriteLine "===== ログ終了 ====="
-        
-        ' ログファイルを閉じる
-        .Close
-    End With
-    
-    ' メッセージを表示
-    MsgBox "ログファイルが作成されました: " & vbCrLf & _
-           str_ログファイル & vbCrLf & vbCrLf & _
-           "保存期間（" & INT_ログ保存日数 & "日）を過ぎたログファイル " & _
-           lng_削除ファイル数 & " 件を削除しました。", vbInformation
-End Sub
-
-' ログファイルに記録する補助関数
-Public Sub ログ記録(str_メッセージ As String, Optional str_レベル As String = "INFO")
-    ' 変数宣言
-    Dim str_ログフォルダ As String
-    Dim str_ログファイル As String
-    Dim obj_FSO As Object
-    Dim obj_テキストストリーム As Object
-    
-    ' FSO（FileSystemObject）の作成
-    Set obj_FSO = CreateObject("Scripting.FileSystemObject")
-    
-    ' ログフォルダの設定
-    str_ログフォルダ = ThisWorkbook.Path & "\logs\"
-    
-    ' 日付に基づくログファイル名（1日1ファイル）
-    str_ログファイル = str_ログフォルダ & "Log_" & Format(Date, "yyyymmdd") & ".txt"
-    
-    ' ログフォルダの確認と作成
-    If Not obj_FSO.FolderExists(str_ログフォルダ) Then
-        ' ログフォルダが存在しない場合は作成する
-        obj_FSO.CreateFolder str_ログフォルダ
-    End If
-    
-    ' ログファイルを開く（存在しない場合は作成される）
-    ' 8 = ForAppending（追記モード）
-    Set obj_テキストストリーム = obj_FSO.OpenTextFile(str_ログファイル, 8, True)
-    
-    ' タイムスタンプとレベルを含めてメッセージを書き込む
-    obj_テキストストリーム.WriteLine Format(Now, "yyyy/mm/dd hh:nn:ss") & " [" & str_レベル & "] " & str_メッセージ
-    
-    ' ファイルを閉じる
-    obj_テキストストリーム.Close
-    
-    ' オブジェクトの解放
-    Set obj_テキストストリーム = Nothing
-    Set obj_FSO = Nothing
-End Sub
