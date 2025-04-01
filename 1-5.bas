@@ -126,6 +126,7 @@ Sub 配列処理高速化サンプル()
     Dim lng_合計値 As Long
     Dim lng_開始時間 As Long
     Dim lng_終了時間 As Long
+    Dim lng_最終行 As Long ' 未宣言変数を追加
     
     ' 処理時間計測開始
     lng_開始時間 = Timer
