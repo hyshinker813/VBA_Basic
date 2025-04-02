@@ -1,81 +1,22 @@
-' Excel添付ファイルを自動的に分析する（オプション）
-                    If str_拡張子 = ".xls" Or str_拡張子 = "xlsx" Then
-                        ' ここに分析ロジックを入れることができます
-                        ' 例：
-                        ' Call Excel添付ファイル分析(str_保存パス)
-                    End If
-                    
-                    ' 処理数をカウント
-                    lng_処理数 = lng_処理数 + 1
-                Else
-                    ' 対象外の拡張子
-                    Print #int_ファイル番号, "  - スキップ: " & str_ファイル名 & " (対象外の形式)"
-                End If
-            Next obj_添付ファイル
-            
-            ' メールにフラグを設定（オプション）
-            obj_メール.FlagStatus = 1 ' olFlagComplete
-            
-            ' メールを既読にする（オプション）
-            obj_メール.UnRead = False
-            
-            ' メールをフォルダ移動（オプション）
-            'Dim obj_処理済フォルダ As Object
-            'Set obj_処理済フォルダ = obj_受信トレイ.Folders("処理済")
-            'If Not obj_処理済フォルダ Is Nothing Then
-            '    obj_メール.Move obj_処理済フォルダ
-            'End If
-            
-            Print #int_ファイル番号, "------------------------------------------------------"
-        End If
-    Next i
-    
-    ' ログファイルを閉じる
-    Print #int_ファイル番号, ""
-    Print #int_ファイル番号, "処理完了"
-    Print #int_ファイル番号, "合計処理ファイル数: " & lng_処理数
-    Print #int_ファイル番号, "処理終了時刻: " & Format(Now, "yyyy/mm/dd hh:nn:ss")
-    Close #int_ファイル番号
-    
-    ' 正常終了処理
-    Application.StatusBar = False
-    MsgBox "添付ファイルの処理が完了しました。" & vbCrLf & _
-           "処理ファイル数: " & lng_処理数 & vbCrLf & _
-           "保存先: " & str_日付フォルダ, vbInformation
-    
-    Exit Sub
-    
-ErrorHandler:
-    ' エラー処理
-    MsgBox "エラーが発生しました: " & vbCrLf & Err.Description, vbCritical
-    
-    ' ファイルハンドルが開いている場合は閉じる
-    On Error Resume Next
-    Close #int_ファイル番号
-    
-    Application.StatusBar = False
-End Sub
-
 '''---------------------------------------------------------
-' 3. エクセルデータを元にしたメール配信
+' 1. 定型メール送信の自動化（テンプレート活用）
 '''---------------------------------------------------------
-Sub エクセルデータメール配信()
+Sub 定型メール送信自動化()
     ' 変数宣言
     Dim obj_Outlook As Object
     Dim obj_Mail As Object
-    Dim ws_データ As Worksheet
-    Dim ws_テンプレート As Worksheet
-    Dim rng_表 As ListObject
-    Dim rng_行 As ListRow
-    Dim str_HTML本文 As String
+    Dim ws_顧客 As Worksheet
+    Dim lng_最終行 As Long
+    Dim lng_行 As Long
     Dim str_テンプレート As String
-    Dim str_置換前 As String
-    Dim str_置換後 As String
+    Dim str_本文 As String
+    Dim str_宛先 As String
+    Dim str_宛先名 As String
+    Dim str_件名 As String
+    Dim str_添付ファイル As String
+    Dim str_CC As String
     Dim lng_送信数 As Long
-    Dim bln_HTML形式 As Boolean
-    
-    ' HTML形式かプレーンテキスト形式かの設定
-    bln_HTML形式 = True
+    Dim str_用件 As String ' 未宣言変数を追加
     
     ' Outlookが起動しているか確認
     On Error Resume Next
@@ -85,222 +26,109 @@ Sub エクセルデータメール配信()
     End If
     On Error GoTo ErrorHandler
     
-    ' ワークシートの設定
-    Set ws_データ = ThisWorkbook.Worksheets("送信データ")
-    Set ws_テンプレート = ThisWorkbook.Worksheets("メールテンプレート")
+    ' 顧客シートの設定
+    Set ws_顧客 = ThisWorkbook.Worksheets("顧客データ")
     
-    ' データが表（ListObject）形式かチェック
-    If ws_データ.ListObjects.Count = 0 Then
-        MsgBox "送信データが表形式になっていません。" & vbCrLf & _
-               "データを表に変換してから再実行してください。", vbExclamation
-        Exit Sub
-    End If
-    
-    ' 送信データ表の取得
-    Set rng_表 = ws_データ.ListObjects(1)
+    ' データの最終行を取得
+    lng_最終行 = ws_顧客.Cells(ws_顧客.Rows.Count, "A").End(xlUp).Row
     
     ' 送信データがない場合
-    If rng_表.ListRows.Count = 0 Then
-        MsgBox "送信データがありません。", vbExclamation
+    If lng_最終行 <= 1 Then
+        MsgBox "送信先データがありません。", vbExclamation
         Exit Sub
     End If
-    
-    ' 必須列の確認（例：メールアドレス列）
-    Dim lng_メールアドレス列 As Long
-    Dim lng_送信状態列 As Long
-    
-    On Error Resume Next
-    lng_メールアドレス列 = rng_表.ListColumns("メールアドレス").Index
-    lng_送信状態列 = rng_表.ListColumns("送信状態").Index
-    On Error GoTo ErrorHandler
-    
-    If lng_メールアドレス列 = 0 Then
-        MsgBox "「メールアドレス」列が見つかりません。", vbExclamation
-        Exit Sub
-    End If
-    
-    ' 送信状態列がなければ追加
-    If lng_送信状態列 = 0 Then
-        Set rng_新列 = rng_表.ListColumns.Add
-        rng_新列.Name = "送信状態"
-        lng_送信状態列 = rng_表.ListColumns.Count
-    End If
-    
-    ' テンプレートの読み込み
-    If bln_HTML形式 Then
-        ' HTML形式のテンプレート
-        str_テンプレート = ws_テンプレート.Range("B1").Value
-        
-        ' HTML形式のテンプレートが空の場合、デフォルトのHTMLを使用
-        If Trim(str_テンプレート) = "" Then
-            str_テンプレート = "<html>" & _
-                              "<head>" & _
-                              "<style>" & _
-                              "body { font-family: Arial, sans-serif; }" & _
-                              "h1 { color: #003366; }" & _
-                              "table { border-collapse: collapse; }" & _
-                              "th, td { border: 1px solid #ddd; padding: 8px; }" & _
-                              "th { background-color: #f2f2f2; }" & _
-                              "</style>" & _
-                              "</head>" & _
-                              "<body>" & _
-                              "<h1>{{タイトル}}</h1>" & _
-                              "<p>{{宛先}}様</p>" & _
-                              "<p>いつもお世話になっております。{{会社名}}の{{担当者}}です。</p>" & _
-                              "<p>下記の通りご連絡いたします。</p>" & _
-                              "<ul>" & _
-                              "<li>{{項目1}}</li>" & _
-                              "<li>{{項目2}}</li>" & _
-                              "</ul>" & _
-                              "<p>詳細は以下をご確認ください。</p>" & _
-                              "<table>" & _
-                              "<tr><th>項目</th><th>内容</th></tr>" & _
-                              "<tr><td>{{項目A}}</td><td>{{内容A}}</td></tr>" & _
-                              "<tr><td>{{項目B}}</td><td>{{内容B}}</td></tr>" & _
-                              "</table>" & _
-                              "<p>よろしくお願いいたします。</p>" & _
-                              "<hr>" & _
-                              "<p>{{会社名}}<br>" & _
-                              "{{担当者}}<br>" & _
-                              "TEL: {{電話番号}}<br>" & _
-                              "Email: {{メールアドレス}}</p>" & _
-                              "</body>" & _
-                              "</html>"
-        End If
-    Else
-        ' プレーンテキスト形式のテンプレート
-        str_テンプレート = ws_テンプレート.Range("A1").Value
-        
-        ' テキスト形式のテンプレートが空の場合、デフォルトのテキストを使用
-        If Trim(str_テンプレート) = "" Then
-            str_テンプレート = "{{タイトル}}" & vbCrLf & vbCrLf & _
-                              "{{宛先}}様" & vbCrLf & vbCrLf & _
-                              "いつもお世話になっております。{{会社名}}の{{担当者}}です。" & vbCrLf & vbCrLf & _
-                              "下記の通りご連絡いたします。" & vbCrLf & _
-                              "・{{項目1}}" & vbCrLf & _
-                              "・{{項目2}}" & vbCrLf & vbCrLf & _
-                              "詳細は以下をご確認ください。" & vbCrLf & _
-                              "-------------------" & vbCrLf & _
-                              "項目: {{項目A}}" & vbCrLf & _
-                              "内容: {{内容A}}" & vbCrLf & vbCrLf & _
-                              "項目: {{項目B}}" & vbCrLf & _
-                              "内容: {{内容B}}" & vbCrLf & _
-                              "-------------------" & vbCrLf & vbCrLf & _
-                              "よろしくお願いいたします。" & vbCrLf & vbCrLf & _
-                              "------------------------------" & vbCrLf & _
-                              "{{会社名}}" & vbCrLf & _
-                              "{{担当者}}" & vbCrLf & _
-                              "TEL: {{電話番号}}" & vbCrLf & _
-                              "Email: {{メールアドレス}}" & vbCrLf & _
-                              "------------------------------"
-        End If
-    End If
-    
-    ' 自社情報の設定
-    str_テンプレート = Replace(str_テンプレート, "{{会社名}}", "株式会社テプコソリューションアドバンス")
-    str_テンプレート = Replace(str_テンプレート, "{{担当者}}", "電力 太郎")
-    str_テンプレート = Replace(str_テンプレート, "{{電話番号}}", "03-1234-5678")
-    str_テンプレート = Replace(str_テンプレート, "{{メールアドレス}}", "taro.denryoku@example.com")
     
     ' 確認メッセージ
-    If MsgBox("合計 " & rng_表.ListRows.Count & " 件のメールを送信します。よろしいですか？", _
+    If MsgBox("合計 " & lng_最終行 - 1 & " 件のメールを送信します。よろしいですか？", _
               vbQuestion + vbYesNo, "確認") = vbNo Then
         Exit Sub
     End If
     
-    ' 送信数の初期化
-    lng_送信数 = 0
+    ' テンプレートの読み込み（例として組み込みテンプレート）
+    str_テンプレート = "拝啓 [顧客名] 様" & vbCrLf & vbCrLf & _
+                      "いつもお世話になっております。" & vbCrLf & _
+                      "[会社名]の[担当者]です。" & vbCrLf & vbCrLf & _
+                      "本日は下記の件につきましてご連絡いたしました。" & vbCrLf & _
+                      "・[用件]" & vbCrLf & vbCrLf & _
+                      "詳細は添付ファイルをご確認ください。" & vbCrLf & _
+                      "ご不明な点がございましたら、お気軽にお問い合わせください。" & vbCrLf & vbCrLf & _
+                      "よろしくお願いいたします。" & vbCrLf & vbCrLf & _
+                      "敬具" & vbCrLf & vbCrLf & _
+                      "------------------------------" & vbCrLf & _
+                      "[会社名]" & vbCrLf & _
+                      "[担当者]" & vbCrLf & _
+                      "TEL: [電話番号]" & vbCrLf & _
+                      "Email: [メールアドレス]" & vbCrLf & _
+                      "------------------------------"
+    
+    ' 自社情報の設定
+    str_テンプレート = Replace(str_テンプレート, "[会社名]", "株式会社テプコソリューションアドバンス")
+    str_テンプレート = Replace(str_テンプレート, "[担当者]", "電力 太郎")
+    str_テンプレート = Replace(str_テンプレート, "[電話番号]", "03-1234-5678")
+    str_テンプレート = Replace(str_テンプレート, "[メールアドレス]", "taro.denryoku@example.com")
+    
+    ' 添付ファイルのパス設定
+    str_添付ファイル = ThisWorkbook.Path & "\資料.pdf"
+    
+    ' 添付ファイルの存在確認
+    If Dir(str_添付ファイル) = "" Then
+        If MsgBox("添付ファイルが見つかりません: " & str_添付ファイル & vbCrLf & _
+                 "添付なしで続行しますか？", vbQuestion + vbYesNo, "確認") = vbNo Then
+            Exit Sub
+        End If
+        str_添付ファイル = ""
+    End If
     
     ' 進捗表示の初期化
     Application.StatusBar = "メール送信準備中..."
     
-    ' 各行のデータでメールを送信
-    For Each rng_行 In rng_表.ListRows
-        ' 既に送信済みならスキップ（オプション）
-        If lng_送信状態列 > 0 Then
-            If InStr(1, rng_行.Range(1, lng_送信状態列).Value, "送信済", vbTextCompare) > 0 Then
-                GoTo NextRow
-            End If
-        End If
+    ' 送信数の初期化
+    lng_送信数 = 0
+    
+    ' 各顧客にメールを送信
+    For lng_行 = 2 To lng_最終行 ' ヘッダー行をスキップ
+        ' データの取得
+        str_宛先 = ws_顧客.Cells(lng_行, 3).Value ' メールアドレス列
+        str_宛先名 = ws_顧客.Cells(lng_行, 2).Value ' 顧客名列
+        str_用件 = ws_顧客.Cells(lng_行, 4).Value ' 用件列
         
-        ' メールアドレスの取得
-        Dim str_宛先 As String
-        str_宛先 = rng_行.Range(1, lng_メールアドレス列).Value
-        
-        ' メールアドレスが空ならスキップ
+        ' 必須データのチェック
         If Trim(str_宛先) = "" Then
-            If lng_送信状態列 > 0 Then
-                rng_行.Range(1, lng_送信状態列).Value = "エラー: メールアドレスなし"
-            End If
-            GoTo NextRow
+            ' メールアドレスがない場合はスキップ
+            ws_顧客.Cells(lng_行, 5).Value = "エラー: メールアドレスなし"
+            GoTo NextCustomer
         End If
         
         ' 進捗表示を更新
-        Application.StatusBar = "メール送信中... " & lng_送信数 + 1 & "/" & rng_表.ListRows.Count & _
-                              " (" & Format((lng_送信数 + 1) / rng_表.ListRows.Count, "0%") & ")"
+        Application.StatusBar = "メール送信中... " & lng_行 - 1 & "/" & lng_最終行 - 1 & _
+                              " (" & Format((lng_行 - 1) / (lng_最終行 - 1), "0%") & ")"
         
-        ' テンプレートをカスタマイズ
-        str_HTML本文 = str_テンプレート
+        ' 本文のカスタマイズ
+        str_本文 = str_テンプレート
+        str_本文 = Replace(str_本文, "[顧客名]", str_宛先名)
+        str_本文 = Replace(str_本文, "[用件]", str_用件)
         
-        ' 各列のデータでテンプレートのプレースホルダーを置換
-        For i = 1 To rng_表.ListColumns.Count
-            str_置換前 = "{{" & rng_表.ListColumns(i).Name & "}}"
-            str_置換後 = rng_行.Range(1, i).Value
-            
-            ' 置換
-            str_HTML本文 = Replace(str_HTML本文, str_置換前, str_置換後)
-        Next i
+        ' 件名の設定
+        str_件名 = "【ご連絡】" & str_用件 & "について"
         
         ' メール作成
         Set obj_Mail = obj_Outlook.CreateItem(0) ' olMailItem
         
         With obj_Mail
             .To = str_宛先
-            
-            ' CC設定（オプション - 対応する列がある場合）
-            On Error Resume Next
-            lng_CC列 = rng_表.ListColumns("CC").Index
-            If lng_CC列 > 0 Then
-                If Trim(rng_行.Range(1, lng_CC列).Value) <> "" Then
-                    .CC = rng_行.Range(1, lng_CC列).Value
-                End If
+            ' CC設定（オプション）
+            If ws_顧客.Cells(lng_行, 6).Value <> "" Then
+                .CC = ws_顧客.Cells(lng_行, 6).Value
             End If
-            On Error GoTo ErrorHandler
+            .Subject = str_件名
+            .Body = str_本文
             
-            ' 件名設定
-            On Error Resume Next
-            lng_件名列 = rng_表.ListColumns("件名").Index
-            If lng_件名列 > 0 Then
-                .Subject = rng_行.Range(1, lng_件名列).Value
-            Else
-                ' デフォルト件名
-                .Subject = "【お知らせ】重要なお知らせ"
-            End If
-            On Error GoTo ErrorHandler
-            
-            ' HTML形式またはテキスト形式で本文を設定
-            If bln_HTML形式 Then
-                .HTMLBody = str_HTML本文
-            Else
-                .Body = str_HTML本文
+            ' 添付ファイルの追加（ファイルが存在する場合）
+            If str_添付ファイル <> "" Then
+                .Attachments.Add str_添付ファイル
             End If
             
-            ' 添付ファイル（オプション - 対応する列がある場合）
-            On Error Resume Next
-            lng_添付ファイル列 = rng_表.ListColumns("添付ファイル").Index
-            If lng_添付ファイル列 > 0 Then
-                If Trim(rng_行.Range(1, lng_添付ファイル列).Value) <> "" Then
-                    Dim str_添付ファイルパス As String
-                    str_添付ファイルパス = ThisWorkbook.Path & "\" & rng_行.Range(1, lng_添付ファイル列).Value
-                    
-                    If Dir(str_添付ファイルパス) <> "" Then
-                        .Attachments.Add str_添付ファイルパス
-                    End If
-                End If
-            End If
-            On Error GoTo ErrorHandler
-            
-            ' メールの送信または表示
+            ' メールの送信（または下書き保存、表示など）
             ' コメントアウトを切り替えて目的の動作を選択
             
             ' 方法1: 直接送信（自動送信）
@@ -313,10 +141,8 @@ Sub エクセルデータメール配信()
             .Display
         End With
         
-        ' 送信状態を更新
-        If lng_送信状態列 > 0 Then
-            rng_行.Range(1, lng_送信状態列).Value = "送信済: " & Format(Now, "yyyy/mm/dd hh:mm:ss")
-        End If
+        ' 送信ログの記録
+        ws_顧客.Cells(lng_行, 5).Value = "送信済: " & Format(Now, "yyyy/mm/dd hh:mm:ss")
         
         ' 送信数をカウント
         lng_送信数 = lng_送信数 + 1
@@ -324,13 +150,13 @@ Sub エクセルデータメール配信()
         ' 少し待機（サーバー負荷軽減のため）
         Application.Wait Now + TimeSerial(0, 0, 1)
         
-NextRow:
-    Next rng_行
+NextCustomer:
+    Next lng_行
     
     ' 正常終了処理
     Application.StatusBar = False
     MsgBox "メール送信処理が完了しました。" & vbCrLf & _
-           "送信数: " & lng_送信数 & "/" & rng_表.ListRows.Count, vbInformation
+           "送信数: " & lng_送信数 & "/" & lng_最終行 - 1, vbInformation
     
     Exit Sub
     
@@ -338,8 +164,6 @@ ErrorHandler:
     ' エラー処理
     MsgBox "エラーが発生しました: " & vbCrLf & Err.Description, vbCritical
     Application.StatusBar = False
-End Sub
-
 '''---------------------------------------------------------
 ' 4. 受信メールのフィルタリングと処理
 '''---------------------------------------------------------
@@ -515,8 +339,6 @@ ErrorHandler:
     ' エラー処理
     MsgBox "エラーが発生しました: " & vbCrLf & Err.Description, vbCritical
     Application.StatusBar = False
-End Sub
-
 '''---------------------------------------------------------
 ' 5. メール本文のHTML整形と装飾
 '''---------------------------------------------------------
@@ -691,171 +513,6 @@ Sub メール本文HTML整形装飾()
 ErrorHandler:
     ' エラー処理
     MsgBox "エラーが発生しました: " & vbCrLf & Err.Description, vbCritical
-End Sub'''---------------------------------------------------------
-' 1. 定型メール送信の自動化（テンプレート活用）
-'''---------------------------------------------------------
-Sub 定型メール送信自動化()
-    ' 変数宣言
-    Dim obj_Outlook As Object
-    Dim obj_Mail As Object
-    Dim ws_顧客 As Worksheet
-    Dim lng_最終行 As Long
-    Dim lng_行 As Long
-    Dim str_テンプレート As String
-    Dim str_本文 As String
-    Dim str_宛先 As String
-    Dim str_宛先名 As String
-    Dim str_件名 As String
-    Dim str_添付ファイル As String
-    Dim str_CC As String
-    Dim lng_送信数 As Long
-    
-    ' Outlookが起動しているか確認
-    On Error Resume Next
-    Set obj_Outlook = GetObject(, "Outlook.Application")
-    If obj_Outlook Is Nothing Then
-        Set obj_Outlook = CreateObject("Outlook.Application")
-    End If
-    On Error GoTo ErrorHandler
-    
-    ' 顧客シートの設定
-    Set ws_顧客 = ThisWorkbook.Worksheets("顧客データ")
-    
-    ' データの最終行を取得
-    lng_最終行 = ws_顧客.Cells(ws_顧客.Rows.Count, "A").End(xlUp).Row
-    
-    ' 送信データがない場合
-    If lng_最終行 <= 1 Then
-        MsgBox "送信先データがありません。", vbExclamation
-        Exit Sub
-    End If
-    
-    ' 確認メッセージ
-    If MsgBox("合計 " & lng_最終行 - 1 & " 件のメールを送信します。よろしいですか？", _
-              vbQuestion + vbYesNo, "確認") = vbNo Then
-        Exit Sub
-    End If
-    
-    ' テンプレートの読み込み（例として組み込みテンプレート）
-    str_テンプレート = "拝啓 [顧客名] 様" & vbCrLf & vbCrLf & _
-                      "いつもお世話になっております。" & vbCrLf & _
-                      "[会社名]の[担当者]です。" & vbCrLf & vbCrLf & _
-                      "本日は下記の件につきましてご連絡いたしました。" & vbCrLf & _
-                      "・[用件]" & vbCrLf & vbCrLf & _
-                      "詳細は添付ファイルをご確認ください。" & vbCrLf & _
-                      "ご不明な点がございましたら、お気軽にお問い合わせください。" & vbCrLf & vbCrLf & _
-                      "よろしくお願いいたします。" & vbCrLf & vbCrLf & _
-                      "敬具" & vbCrLf & vbCrLf & _
-                      "------------------------------" & vbCrLf & _
-                      "[会社名]" & vbCrLf & _
-                      "[担当者]" & vbCrLf & _
-                      "TEL: [電話番号]" & vbCrLf & _
-                      "Email: [メールアドレス]" & vbCrLf & _
-                      "------------------------------"
-    
-    ' 自社情報の設定
-    str_テンプレート = Replace(str_テンプレート, "[会社名]", "株式会社テプコソリューションアドバンス")
-    str_テンプレート = Replace(str_テンプレート, "[担当者]", "電力 太郎")
-    str_テンプレート = Replace(str_テンプレート, "[電話番号]", "03-1234-5678")
-    str_テンプレート = Replace(str_テンプレート, "[メールアドレス]", "taro.denryoku@example.com")
-    
-    ' 添付ファイルのパス設定
-    str_添付ファイル = ThisWorkbook.Path & "\資料.pdf"
-    
-    ' 添付ファイルの存在確認
-    If Dir(str_添付ファイル) = "" Then
-        If MsgBox("添付ファイルが見つかりません: " & str_添付ファイル & vbCrLf & _
-                 "添付なしで続行しますか？", vbQuestion + vbYesNo, "確認") = vbNo Then
-            Exit Sub
-        End If
-        str_添付ファイル = ""
-    End If
-    
-    ' 進捗表示の初期化
-    Application.StatusBar = "メール送信準備中..."
-    
-    ' 送信数の初期化
-    lng_送信数 = 0
-    
-    ' 各顧客にメールを送信
-    For lng_行 = 2 To lng_最終行 ' ヘッダー行をスキップ
-        ' データの取得
-        str_宛先 = ws_顧客.Cells(lng_行, 3).Value ' メールアドレス列
-        str_宛先名 = ws_顧客.Cells(lng_行, 2).Value ' 顧客名列
-        str_用件 = ws_顧客.Cells(lng_行, 4).Value ' 用件列
-        
-        ' 必須データのチェック
-        If Trim(str_宛先) = "" Then
-            ' メールアドレスがない場合はスキップ
-            ws_顧客.Cells(lng_行, 5).Value = "エラー: メールアドレスなし"
-            GoTo NextCustomer
-        End If
-        
-        ' 進捗表示を更新
-        Application.StatusBar = "メール送信中... " & lng_行 - 1 & "/" & lng_最終行 - 1 & _
-                              " (" & Format((lng_行 - 1) / (lng_最終行 - 1), "0%") & ")"
-        
-        ' 本文のカスタマイズ
-        str_本文 = str_テンプレート
-        str_本文 = Replace(str_本文, "[顧客名]", str_宛先名)
-        str_本文 = Replace(str_本文, "[用件]", str_用件)
-        
-        ' 件名の設定
-        str_件名 = "【ご連絡】" & str_用件 & "について"
-        
-        ' メール作成
-        Set obj_Mail = obj_Outlook.CreateItem(0) ' olMailItem
-        
-        With obj_Mail
-            .To = str_宛先
-            ' CC設定（オプション）
-            If ws_顧客.Cells(lng_行, 6).Value <> "" Then
-                .CC = ws_顧客.Cells(lng_行, 6).Value
-            End If
-            .Subject = str_件名
-            .Body = str_本文
-            
-            ' 添付ファイルの追加（ファイルが存在する場合）
-            If str_添付ファイル <> "" Then
-                .Attachments.Add str_添付ファイル
-            End If
-            
-            ' メールの送信（または下書き保存、表示など）
-            ' コメントアウトを切り替えて目的の動作を選択
-            
-            ' 方法1: 直接送信（自動送信）
-            '.Send
-            
-            ' 方法2: 下書きとして保存
-            '.Save
-            
-            ' 方法3: メールを表示（ユーザーが手動で確認・送信）
-            .Display
-        End With
-        
-        ' 送信ログの記録
-        ws_顧客.Cells(lng_行, 5).Value = "送信済: " & Format(Now, "yyyy/mm/dd hh:mm:ss")
-        
-        ' 送信数をカウント
-        lng_送信数 = lng_送信数 + 1
-        
-        ' 少し待機（サーバー負荷軽減のため）
-        Application.Wait Now + TimeSerial(0, 0, 1)
-        
-NextCustomer:
-    Next lng_行
-    
-    ' 正常終了処理
-    Application.StatusBar = False
-    MsgBox "メール送信処理が完了しました。" & vbCrLf & _
-           "送信数: " & lng_送信数 & "/" & lng_最終行 - 1, vbInformation
-    
-    Exit Sub
-    
-ErrorHandler:
-    ' エラー処理
-    MsgBox "エラーが発生しました: " & vbCrLf & Err.Description, vbCritical
-    Application.StatusBar = False
 End Sub
 
 '''---------------------------------------------------------
@@ -1051,3 +708,299 @@ Sub メール添付ファイル自動保存()
 ErrorHandler:
     ' エラー処理
     MsgBox "エラーが発生しました: " & vbCrLf & Err.Description, vbCritical
+    
+    ' ファイルハンドルが開いている場合は閉じる
+    On Error Resume Next
+    Close #int_ファイル番号
+    
+    Application.StatusBar = False
+End Sub
+
+'''---------------------------------------------------------
+' 3. エクセルデータを元にしたメール配信
+'''---------------------------------------------------------
+Sub エクセルデータメール配信()
+    ' 変数宣言
+    Dim obj_Outlook As Object
+    Dim obj_Mail As Object
+    Dim ws_データ As Worksheet
+    Dim ws_テンプレート As Worksheet
+    Dim rng_表 As ListObject
+    Dim rng_行 As ListRow
+    Dim str_HTML本文 As String
+    Dim str_テンプレート As String
+    Dim str_置換前 As String
+    Dim str_置換後 As String
+    Dim lng_送信数 As Long
+    Dim bln_HTML形式 As Boolean
+    Dim rng_新列 As ListColumn ' 未宣言変数を追加
+    Dim i As Long ' 未宣言変数を追加
+    
+    ' HTML形式かプレーンテキスト形式かの設定
+    bln_HTML形式 = True
+    
+    ' Outlookが起動しているか確認
+    On Error Resume Next
+    Set obj_Outlook = GetObject(, "Outlook.Application")
+    If obj_Outlook Is Nothing Then
+        Set obj_Outlook = CreateObject("Outlook.Application")
+    End If
+    On Error GoTo ErrorHandler
+    
+    ' ワークシートの設定
+    Set ws_データ = ThisWorkbook.Worksheets("送信データ")
+    Set ws_テンプレート = ThisWorkbook.Worksheets("メールテンプレート")
+    
+    ' データが表（ListObject）形式かチェック
+    If ws_データ.ListObjects.Count = 0 Then
+        MsgBox "送信データが表形式になっていません。" & vbCrLf & _
+               "データを表に変換してから再実行してください。", vbExclamation
+        Exit Sub
+    End If
+    
+    ' 送信データ表の取得
+    Set rng_表 = ws_データ.ListObjects(1)
+    
+    ' 送信データがない場合
+    If rng_表.ListRows.Count = 0 Then
+        MsgBox "送信データがありません。", vbExclamation
+        Exit Sub
+    End If
+    
+    ' 必須列の確認（例：メールアドレス列）
+    Dim lng_メールアドレス列 As Long
+    Dim lng_送信状態列 As Long
+    
+    On Error Resume Next
+    lng_メールアドレス列 = rng_表.ListColumns("メールアドレス").Index
+    lng_送信状態列 = rng_表.ListColumns("送信状態").Index
+    On Error GoTo ErrorHandler
+    
+    If lng_メールアドレス列 = 0 Then
+        MsgBox "「メールアドレス」列が見つかりません。", vbExclamation
+        Exit Sub
+    End If
+    
+    ' 送信状態列がなければ追加
+    If lng_送信状態列 = 0 Then
+        Set rng_新列 = rng_表.ListColumns.Add
+        rng_新列.Name = "送信状態"
+        lng_送信状態列 = rng_表.ListColumns.Count
+    End If
+    
+    ' テンプレートの読み込み
+    If bln_HTML形式 Then
+        ' HTML形式のテンプレート
+        str_テンプレート = ws_テンプレート.Range("B1").Value
+        
+        ' HTML形式のテンプレートが空の場合、デフォルトのHTMLを使用
+        If Trim(str_テンプレート) = "" Then
+            str_テンプレート = "<html>" & _
+                              "<head>" & _
+                              "<style>" & _
+                              "body { font-family: Arial, sans-serif; }" & _
+                              "h1 { color: #003366; }" & _
+                              "table { border-collapse: collapse; }" & _
+                              "th, td { border: 1px solid #ddd; padding: 8px; }" & _
+                              "th { background-color: #f2f2f2; }" & _
+                              "</style>" & _
+                              "</head>" & _
+                              "<body>" & _
+                              "<h1>{{タイトル}}</h1>" & _
+                              "<p>{{宛先}}様</p>" & _
+                              "<p>いつもお世話になっております。{{会社名}}の{{担当者}}です。</p>" & _
+                              "<p>下記の通りご連絡いたします。</p>" & _
+                              "<ul>" & _
+                              "<li>{{項目1}}</li>" & _
+                              "<li>{{項目2}}</li>" & _
+                              "</ul>" & _
+                              "<p>詳細は以下をご確認ください。</p>" & _
+                              "<table>" & _
+                              "<tr><th>項目</th><th>内容</th></tr>" & _
+                              "<tr><td>{{項目A}}</td><td>{{内容A}}</td></tr>" & _
+                              "<tr><td>{{項目B}}</td><td>{{内容B}}</td></tr>" & _
+                              "</table>" & _
+                              "<p>よろしくお願いいたします。</p>" & _
+                              "<hr>" & _
+                              "<p>{{会社名}}<br>" & _
+                              "{{担当者}}<br>" & _
+                              "TEL: {{電話番号}}<br>" & _
+                              "Email: {{メールアドレス}}</p>" & _
+                              "</body>" & _
+                              "</html>"
+        End If
+    Else
+        ' プレーンテキスト形式のテンプレート
+        str_テンプレート = ws_テンプレート.Range("A1").Value
+        
+        ' テキスト形式のテンプレートが空の場合、デフォルトのテキストを使用
+        If Trim(str_テンプレート) = "" Then
+            str_テンプレート = "{{タイトル}}" & vbCrLf & vbCrLf & _
+                              "{{宛先}}様" & vbCrLf & vbCrLf & _
+                              "いつもお世話になっております。{{会社名}}の{{担当者}}です。" & vbCrLf & vbCrLf & _
+                              "下記の通りご連絡いたします。" & vbCrLf & _
+                              "・{{項目1}}" & vbCrLf & _
+                              "・{{項目2}}" & vbCrLf & vbCrLf & _
+                              "詳細は以下をご確認ください。" & vbCrLf & _
+                              "-------------------" & vbCrLf & _
+                              "項目: {{項目A}}" & vbCrLf & _
+                              "内容: {{内容A}}" & vbCrLf & vbCrLf & _
+                              "項目: {{項目B}}" & vbCrLf & _
+                              "内容: {{内容B}}" & vbCrLf & _
+                              "-------------------" & vbCrLf & vbCrLf & _
+                              "よろしくお願いいたします。" & vbCrLf & vbCrLf & _
+                              "------------------------------" & vbCrLf & _
+                              "{{会社名}}" & vbCrLf & _
+                              "{{担当者}}" & vbCrLf & _
+                              "TEL: {{電話番号}}" & vbCrLf & _
+                              "Email: {{メールアドレス}}" & vbCrLf & _
+                              "------------------------------"
+        End If
+    End If
+    
+    ' 自社情報の設定
+    str_テンプレート = Replace(str_テンプレート, "{{会社名}}", "株式会社テプコソリューションアドバンス")
+    str_テンプレート = Replace(str_テンプレート, "{{担当者}}", "電力 太郎")
+    str_テンプレート = Replace(str_テンプレート, "{{電話番号}}", "03-1234-5678")
+    str_テンプレート = Replace(str_テンプレート, "{{メールアドレス}}", "taro.denryoku@example.com")
+    
+    ' 確認メッセージ
+    If MsgBox("合計 " & rng_表.ListRows.Count & " 件のメールを送信します。よろしいですか？", _
+              vbQuestion + vbYesNo, "確認") = vbNo Then
+        Exit Sub
+    End If
+    
+    ' 送信数の初期化
+    lng_送信数 = 0
+    
+    ' 進捗表示の初期化
+    Application.StatusBar = "メール送信準備中..."
+    
+    ' 各行のデータでメールを送信
+    For Each rng_行 In rng_表.ListRows
+        ' 既に送信済みならスキップ（オプション）
+        If lng_送信状態列 > 0 Then
+            If InStr(1, rng_行.Range(1, lng_送信状態列).Value, "送信済", vbTextCompare) > 0 Then
+                GoTo NextRow
+            End If
+        End If
+        
+        ' メールアドレスの取得
+        Dim str_宛先 As String
+        str_宛先 = rng_行.Range(1, lng_メールアドレス列).Value
+        
+        ' メールアドレスが空ならスキップ
+        If Trim(str_宛先) = "" Then
+            If lng_送信状態列 > 0 Then
+                rng_行.Range(1, lng_送信状態列).Value = "エラー: メールアドレスなし"
+            End If
+            GoTo NextRow
+        End If
+        
+        ' 進捗表示を更新
+        Application.StatusBar = "メール送信中... " & lng_送信数 + 1 & "/" & rng_表.ListRows.Count & _
+                              " (" & Format((lng_送信数 + 1) / rng_表.ListRows.Count, "0%") & ")"
+        
+        ' テンプレートをカスタマイズ
+        str_HTML本文 = str_テンプレート
+        
+        ' 各列のデータでテンプレートのプレースホルダーを置換
+        For i = 1 To rng_表.ListColumns.Count
+            str_置換前 = "{{" & rng_表.ListColumns(i).Name & "}}"
+            str_置換後 = rng_行.Range(1, i).Value
+            
+            ' 置換
+            str_HTML本文 = Replace(str_HTML本文, str_置換前, str_置換後)
+        Next i
+        
+        ' メール作成
+        Set obj_Mail = obj_Outlook.CreateItem(0) ' olMailItem
+        
+        With obj_Mail
+            .To = str_宛先
+            
+            ' CC設定（オプション - 対応する列がある場合）
+            On Error Resume Next
+            Dim lng_CC列 As Long ' 未宣言変数を追加
+            lng_CC列 = rng_表.ListColumns("CC").Index
+            If lng_CC列 > 0 Then
+                If Trim(rng_行.Range(1, lng_CC列).Value) <> "" Then
+                    .CC = rng_行.Range(1, lng_CC列).Value
+                End If
+            End If
+            On Error GoTo ErrorHandler
+            
+            ' 件名設定
+            On Error Resume Next
+            Dim lng_件名列 As Long ' 未宣言変数を追加
+            lng_件名列 = rng_表.ListColumns("件名").Index
+            If lng_件名列 > 0 Then
+                .Subject = rng_行.Range(1, lng_件名列).Value
+            Else
+                ' デフォルト件名
+                .Subject = "【お知らせ】重要なお知らせ"
+            End If
+            On Error GoTo ErrorHandler
+            
+            ' HTML形式またはテキスト形式で本文を設定
+            If bln_HTML形式 Then
+                .HTMLBody = str_HTML本文
+            Else
+                .Body = str_HTML本文
+            End If
+            
+            ' 添付ファイル（オプション - 対応する列がある場合）
+            On Error Resume Next
+            Dim lng_添付ファイル列 As Long ' 未宣言変数を追加
+            lng_添付ファイル列 = rng_表.ListColumns("添付ファイル").Index
+            If lng_添付ファイル列 > 0 Then
+                If Trim(rng_行.Range(1, lng_添付ファイル列).Value) <> "" Then
+                    Dim str_添付ファイルパス As String
+                    str_添付ファイルパス = ThisWorkbook.Path & "\" & rng_行.Range(1, lng_添付ファイル列).Value
+                    
+                    If Dir(str_添付ファイルパス) <> "" Then
+                        .Attachments.Add str_添付ファイルパス
+                    End If
+                End If
+            End If
+            On Error GoTo ErrorHandler
+            
+            ' メールの送信または表示
+            ' コメントアウトを切り替えて目的の動作を選択
+            
+            ' 方法1: 直接送信（自動送信）
+            '.Send
+            
+            ' 方法2: 下書きとして保存
+            '.Save
+            
+            ' 方法3: メールを表示（ユーザーが手動で確認・送信）
+            .Display
+        End With
+        
+        ' 送信状態を更新
+        If lng_送信状態列 > 0 Then
+            rng_行.Range(1, lng_送信状態列).Value = "送信済: " & Format(Now, "yyyy/mm/dd hh:mm:ss")
+        End If
+        
+        ' 送信数をカウント
+        lng_送信数 = lng_送信数 + 1
+        
+        ' 少し待機（サーバー負荷軽減のため）
+        Application.Wait Now + TimeSerial(0, 0, 1)
+        
+NextRow:
+    Next rng_行
+    
+    ' 正常終了処理
+    Application.StatusBar = False
+    MsgBox "メール送信処理が完了しました。" & vbCrLf & _
+           "送信数: " & lng_送信数 & "/" & rng_表.ListRows.Count, vbInformation
+    
+    Exit Sub
+    
+ErrorHandler:
+    ' エラー処理
+    MsgBox "エラーが発生しました: " & vbCrLf & Err.Description, vbCritical
+    Application.StatusBar = False
+End Sub
